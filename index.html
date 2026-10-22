@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inventar locație</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; background: #000; color: #fff; min-height: 100vh; padding-bottom: 40px; }
+  header { background: #ff7a00; color: #000; padding: 16px; text-align: center; }
+  header h1 { font-size: 22px; }
+  main { max-width: 700px; margin: 0 auto; padding: 12px; }
+  section { background: #161616; border: 1px solid #ff7a00; border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+  h2 { color: #ff7a00; font-size: 18px; margin-bottom: 10px; }
+  input, select, button { font-size: 16px; padding: 10px; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; width: 100%; }
+  input:focus, select:focus { outline: 2px solid #ff7a00; }
+  button { background: #ff7a00; color: #000; font-weight: bold; border: none; cursor: pointer; width: auto; padding: 10px 16px; }
+  button.sec { background: #222; color: #ff7a00; border: 1px solid #ff7a00; }
+  button.del { background: #8b0000; color: #fff; padding: 4px 10px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row input { flex: 1; min-width: 150px; }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+  .tabs button { width: 100%; }
+  .tabs button.active { background: #ff7a00; color: #000; }
+  .tabs button:not(.active) { background: #222; color: #ff7a00; border: 1px solid #ff7a00; }
+  .item { border-bottom: 1px solid #333; padding: 12px 0; }
+  .item:last-child { border-bottom: none; }
+  .item .name { font-weight: bold; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .grid { display: grid; grid-template-columns: 1fr 1.4fr 1fr; gap: 6px; }
+  .grid label { font-size: 12px; color: #ff7a00; display: block; margin-bottom: 3px; }
+  .empty, .small { color: #aaa; font-size: 14px; padding: 6px 0; }
+  .empty { font-style: italic; }
+</style>
+</head>
+<body>
+
+<header><h1>Inventar locație</h1></header>
+
+<main>
+
+  <section>
+    <h2>Inventar nou</h2>
+    <div class="row">
+      <input type="date" id="newDate">
+      <button id="createBtn">Creează inventar</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Istoric inventare</h2>
+    <select id="invSelect"></select>
+    <div class="row" style="margin-top:8px">
+      <button class="sec" id="deleteInvBtn">Șterge inventarul ales</button>
+    </div>
+  </section>
+
+  <div class="tabs" id="tabs"></div>
+
+  <section>
+    <h2 id="catTitle"></h2>
+    <div class="row">
+      <input type="text" id="newItemName" placeholder="Obiect nou (ex: Cola 0.5L)">
+      <button id="addItemBtn">Adaugă</button>
+    </div>
+    <div id="itemsList" style="margin-top:12px"></div>
+  </section>
+
+</main>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import {
+    getFirestore, collection, doc, onSnapshot, addDoc, setDoc, deleteDoc
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyBPqCsTg0JNlQ-K69QPbsoKB-q-1R1C2tg",
+    authDomain: "inventar-locatie.firebaseapp.com",
+    projectId: "inventar-locatie",
+    storageBucket: "inventar-locatie.firebasestorage.app",
+    messagingSenderId: "763282999472",
+    appId: "1:763282999472:web:f4c43bd63943670f07d375",
+    measurementId: "G-VDQHR299ZW"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  const CATEGORIES = [    { id: "bauturi",   name: "Băuturi" },
+    { id: "party",     name: "Party" },
+    { id: "curatenie", name: "Curățenie" },
+    { id: "birotica",  name: "Birotică" }
+  ];
+
+  let items = [];          // lista de obiecte (permanentă)
+  let inventories = [];    // toate inventarele (istoric)
+  let selectedInvId = null;
+  let currentCat = "bauturi";
+
+  const $ = id => document.getElementById(id);
+
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  const fmtDate = d => d ? d.split("-").reverse().join(".") : "";
+
+  // ---------- Date din Firebase ----------
+  onSnapshot(collection(db, "items"), snap => {
+    items = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => a.name.localeCompare(b.name, "ro"));
+    render();
+  });
+
+  onSnapshot(collection(db, "inventories"), snap => {
+    inventories = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+    if (!selectedInvId || !inventories.some(i => i.id === selectedInvId)) {
+      selectedInvId = inventories[0]?.id || null;
+    }
+    render();
+  });
+
+  // ---------- Randuri afișate pentru o categorie ----------
+  function getRows(inv) {
+    const entries = inv?.entries || {};
+    const masterIds = new Set();
+    const rows = items
+      .filter(i => i.category === currentCat)
+      .map(i => {
+        masterIds.add(i.id);
+        return { id: i.id, name: i.name, deleted: false, ...(entries[i.id] || {}) };
+      });
+    // obiecte șterse din listă, dar păstrate în inventarele vechi
+    for (const [id, e] of Object.entries(entries)) {
+      if (!masterIds.has(id) && e.category === currentCat) {
+        rows.push({ id, deleted: true, ...e });
+      }
+    }
+    return rows;
+  }
+
+  // ---------- Salvare ----------
+  async function saveField(row, field, value) {
+    if (!selectedInvId) return;
+    const inv = inventories.find(i => i.id === selectedInvId);
+    const cur = inv?.entries?.[row.id] || {};
+    const entry = {
+      name: row.name,
+      category: currentCat,
+      qty: cur.qty ?? "",
+      status: cur.status ?? "",
+      order: cur.order ?? "",
+      [field]: value
+    };
+    await setDoc(doc(db, "inventories", selectedInvId),
+      { entries: { [row.id]: entry } }, { merge: true });
+  }
+
+  // ---------- Randare ----------
+  function render() {
+    renderInvSelect();
+    renderTabs();
+    renderItems();
+  }
+
+  function renderInvSelect() {
+    const sel = $("invSelect");
+    if (!inventories.length) {
+      sel.innerHTML = `<option>Nu există inventare încă</option>`;
+      sel.disabled = true;
+      return;
+    }
+    sel.disabled = false;
+    sel.innerHTML = inventories.map(i =>
+      `<option value="${i.id}" ${i.id === selectedInvId ? "selected" : ""}>
+         Inventar ${fmtDate(i.date)}
+       </option>`).join("");
+  }
+
+  function renderTabs() {
+    $("tabs").innerHTML = CATEGORIES.map(c =>
+      `<button data-cat="${c.id}" class="${c.id === currentCat ? "active" : ""}">${c.name}</button>`
+    ).join("");
+  }
+
+  function renderItems() {
+    const cat = CATEGORIES.find(c => c.id === currentCat);
+    $("catTitle").textContent = cat.name;
+    const inv = inventories.find(i => i.id === selectedInvId);
+    const rows = getRows(inv);
+    const box = $("itemsList");
+
+    if (!rows.length) {
+      box.innerHTML = `<p class="empty">Nu există obiecte în această categorie. Adaugă mai sus.</p>`;
+      return;
+    }
+
+    box.innerHTML = rows.map(r => `
+      <div class="item" data-id="${r.id}">
+        <div class="name">
+          <span>${esc(r.name)} ${r.deleted ? "<small>(șters din listă)</small>" : ""}</span>
+          ${r.deleted ? "" : `<button class="del" data-del="${r.id}">✕</button>`}
+        </div>
+        ${inv ? `
+        <div class="grid">
+          <div>
+            <label>Stoc (buc)</label>
+            <input type="number" min="0" data-f="qty" value="${r.qty ?? ""}">
+          </div>
+          <div>
+            <label>Status</label>
+            <select data-f="status">
+              <option value="">—</option>
+              <option value="avem" ${r.status === "avem" ? "selected" : ""}>Avem</option>
+              <option value="nu" ${r.status === "nu" ? "selected" : ""}>Nu mai avem</option>
+            </select>
+          </div>
+          <div>
+            <label>De comandat</label>
+            <input type="number" min="0" data-f="order" value="${r.order ?? ""}">
+          </div>
+        </div>` : `<p class="small">Creează sau alege un inventar.</p>`}
+      </div>`).join("");
+  }
+
+  // ---------- Evenimente ----------
+  $("tabs").addEventListener("click", e => {
+    const btn = e.target.closest("[data-cat]");
+    if (!btn) return;
+    currentCat = btn.dataset.cat;
+    render();
+  });
+
+  $("invSelect").addEventListener("change", e => {
+    selectedInvId = e.target.value;
+    render();
+  });
+
+  $("itemsList").addEventListener("change", async e => {
+    const f = e.target.dataset.f;
+    if (!f) return;
+    const id = e.target.closest(".item").dataset.id;
+    const inv = inventories.find(i => i.id === selectedInvId);
+    const row = getRows(inv).find(r => r.id === id);
+    if (!row) return;
+
+    let val = e.target.value;
+    if (f !== "status") val = val === "" ? "" : Number(val);
+    await saveField(row, f, val);
+  });
+
+  $("itemsList").addEventListener("click", async e => {
+    const id = e.target.dataset.del;
+    if (!id) return;
+    const item = items.find(i => i.id === id);
+    if (!confirm(`Ștergi „${item?.name}" din listă? (Inventarele vechi rămân neschimbate.)`)) return;
+    await deleteDoc(doc(db, "items", id));
+  });
+
+  $("addItemBtn").addEventListener("click", async () => {
+    const name = $("newItemName").value.trim();
+    if (!name) return;
+    await addDoc(collection(db, "items"), {
+      name, category: currentCat, createdAt: Date.now()
+    });
+    $("newItemName").value = "";
+  });
+
+  $("newItemName").addEventListener("keydown", e => {
+    if (e.key === "Enter") $("addItemBtn").click();
+  });
+
+  $("createBtn").addEventListener("click", async () => {
+    const date = $("newDate").value;
+    if (!date) { alert("Alege data inventarului."); return; }
+    const ref = await addDoc(collection(db, "inventories"), {
+      date, createdAt: Date.now(), entries: {}
+    });
+    selectedInvId = ref.id;
+  });
+
+  $("deleteInvBtn").addEventListener("click", async () => {
+    const inv = inventories.find(i => i.id === selectedInvId);
+    if (!inv) return;
+    if (!confirm(`Ștergi definitiv inventarul din ${fmtDate(inv.date)}?`)) return;
+    await deleteDoc(doc(db, "inventories", inv.id));
+    selectedInvId = null;
+  });
+
+  // Data implicită = azi (ora locală)
+  const today = new Date();
+  today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
+  $("newDate").value = today.toISOString().slice(0, 10);
+
+  render();
+</script>
+</body>
+</html>
