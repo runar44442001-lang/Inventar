@@ -91,10 +91,12 @@
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
 
-  const CATEGORIES = [    { id: "bauturi",   name: "Băuturi" },
+  const CATEGORIES = [
+    { id: "bauturi",   name: "Băuturi" },
     { id: "party",     name: "Party" },
     { id: "curatenie", name: "Curățenie" },
-    { id: "birotica",  name: "Birotică" }
+    { id: "birotica",  name: "Birotică" },
+    { id: "cafea",     name: "Cafea & consumabile" }
   ];
 
   let items = [];          // lista de obiecte (permanentă)
