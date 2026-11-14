@@ -9,7 +9,8 @@
 <link rel="apple-touch-icon" href="">
 <meta name="theme-color" content="#ff7a00">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Inventar Locație"><style>
+<meta name="apple-mobile-web-app-title" content="Inventar Locație">
+<style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: Arial, Helvetica, sans-serif; background: #000; color: #fff; min-height: 100vh; padding-bottom: 40px; }
   header { background: #ff7a00; color: #000; padding: 16px; text-align: center; }
@@ -33,6 +34,19 @@
   .item .name { font-weight: bold; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .grid { display: grid; grid-template-columns: 1fr 1.4fr 1fr; gap: 6px; }
   .grid label { font-size: 12px; color: #ff7a00; display: block; margin-bottom: 3px; }
+
+  /* Băuturi: 4 locații + total */
+  .locgrid { display: grid; grid-template-columns: repeat(4, 1fr) 1.2fr; gap: 6px; align-items: end; }
+  .locgrid input { padding: 8px 4px; text-align: center; font-weight: bold; }
+  .locgrid label { font-size: 11px; color: #ff7a00; display: block; margin-bottom: 3px; text-align: center; white-space: nowrap; }
+  .tot { background: #ff7a00; color: #000; font-weight: bold; font-size: 16px; line-height: 20px; text-align: center; border-radius: 6px; padding: 8px 4px; }
+  .formula { color: #aaa; font-size: 13px; margin-top: 8px; text-align: right; }
+  .formula b { color: #ff7a00; }
+
+  /* Băuturi: status + de comandat (sub locații) */
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+  .grid2 label { font-size: 12px; color: #ff7a00; display: block; margin-bottom: 3px; }
+
   .empty, .small { color: #aaa; font-size: 14px; padding: 6px 0; }
   .empty { font-style: italic; }
 </style>
@@ -99,6 +113,11 @@
     { id: "cafea",     name: "Cafea & consumabile" }
   ];
 
+  // Configurare pentru Băuturi
+  const SPECIAL_ITEM = "Apă plată pentru STAFF 5L"; // rămâne cu formatul vechi
+  const LOC_KEYS  = ["loc1", "loc2", "loc3", "loc4"];
+  const LOC_NAMES = ["Loc 1", "Loc 2", "Loc 3", "Loc 4"];
+
   let items = [];          // lista de obiecte (permanentă)
   let inventories = [];    // toate inventarele (istoric)
   let selectedInvId = null;
@@ -110,6 +129,9 @@
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   const fmtDate = d => d ? d.split("-").reverse().join(".") : "";
+
+  // Băuturile (cu excepția celei speciale) folosesc cele 4 locații
+  const usesLocs = row => currentCat === "bauturi" && row.name.trim() !== SPECIAL_ITEM;
 
   // ---------- Date din Firebase ----------
   onSnapshot(collection(db, "items"), snap => {
@@ -146,7 +168,7 @@
     return rows;
   }
 
-  // ---------- Salvare ----------
+  // ---------- Salvare (păstrează toate câmpurile existente ale intrării) ----------
   async function saveField(row, field, value) {
     if (!selectedInvId) return;
     const inv = inventories.find(i => i.id === selectedInvId);
@@ -157,6 +179,10 @@
       qty: cur.qty ?? "",
       status: cur.status ?? "",
       order: cur.order ?? "",
+      loc1: cur.loc1 ?? "",
+      loc2: cur.loc2 ?? "",
+      loc3: cur.loc3 ?? "",
+      loc4: cur.loc4 ?? "",
       [field]: value
     };
     await setDoc(doc(db, "inventories", selectedInvId),
@@ -190,6 +216,62 @@
     ).join("");
   }
 
+  // Format pentru băuturi: 4 locații + total, apoi status + de comandat
+  function locsHTML(r) {
+    const vals = LOC_KEYS.map(k => Number(r[k]) || 0);
+    const sum = vals.reduce((a, b) => a + b, 0);
+    return `
+      <div class="locgrid">
+        ${LOC_KEYS.map((k, i) => `
+          <div>
+            <label>${LOC_NAMES[i]}</label>
+            <input type="number" min="0" inputmode="numeric" data-f="${k}" value="${r[k] ?? ""}">
+          </div>`).join("")}
+        <div>
+          <label>Total</label>
+          <div class="tot">${sum}</div>
+        </div>
+      </div>
+      <p class="formula">${vals.join(" + ")} = <b>${sum}</b></p>
+      <div class="grid2">
+        <div>
+          <label>Status</label>
+          <select data-f="status">
+            <option value="">—</option>
+            <option value="avem" ${r.status === "avem" ? "selected" : ""}>Avem</option>
+            <option value="nu" ${r.status === "nu" ? "selected" : ""}>Nu mai avem</option>
+          </select>
+        </div>
+        <div>
+          <label>De comandat</label>
+          <input type="number" min="0" data-f="order" value="${r.order ?? ""}">
+        </div>
+      </div>`;
+  }
+
+  // Format vechi: stoc / status / de comandat
+  function stdHTML(r) {
+    return `
+      <div class="grid">
+        <div>
+          <label>Stoc (buc)</label>
+          <input type="number" min="0" data-f="qty" value="${r.qty ?? ""}">
+        </div>
+        <div>
+          <label>Status</label>
+          <select data-f="status">
+            <option value="">—</option>
+            <option value="avem" ${r.status === "avem" ? "selected" : ""}>Avem</option>
+            <option value="nu" ${r.status === "nu" ? "selected" : ""}>Nu mai avem</option>
+          </select>
+        </div>
+        <div>
+          <label>De comandat</label>
+          <input type="number" min="0" data-f="order" value="${r.order ?? ""}">
+        </div>
+      </div>`;
+  }
+
   function renderItems() {
     const cat = CATEGORIES.find(c => c.id === currentCat);
     $("catTitle").textContent = cat.name;
@@ -202,32 +284,20 @@
       return;
     }
 
-    box.innerHTML = rows.map(r => `
+    box.innerHTML = rows.map(r => {
+      let body;
+      if (!inv) body = `<p class="small">Creează sau alege un inventar.</p>`;
+      else body = usesLocs(r) ? locsHTML(r) : stdHTML(r);
+
+      return `
       <div class="item" data-id="${r.id}">
         <div class="name">
           <span>${esc(r.name)} ${r.deleted ? "<small>(șters din listă)</small>" : ""}</span>
           ${r.deleted ? "" : `<button class="del" data-del="${r.id}">✕</button>`}
         </div>
-        ${inv ? `
-        <div class="grid">
-          <div>
-            <label>Stoc (buc)</label>
-            <input type="number" min="0" data-f="qty" value="${r.qty ?? ""}">
-          </div>
-          <div>
-            <label>Status</label>
-            <select data-f="status">
-              <option value="">—</option>
-              <option value="avem" ${r.status === "avem" ? "selected" : ""}>Avem</option>
-              <option value="nu" ${r.status === "nu" ? "selected" : ""}>Nu mai avem</option>
-            </select>
-          </div>
-          <div>
-            <label>De comandat</label>
-            <input type="number" min="0" data-f="order" value="${r.order ?? ""}">
-          </div>
-        </div>` : `<p class="small">Creează sau alege un inventar.</p>`}
-      </div>`).join("");
+        ${body}
+      </div>`;
+    }).join("");
   }
 
   // ---------- Evenimente ----------
@@ -300,19 +370,20 @@
   $("newDate").value = today.toISOString().slice(0, 10);
 
   render();
-// Iconiță pentru iPhone (Safari nu acceptă SVG la ecranul principal)
-(function makeAppleIcon() {
-  fetch("icon.svg").then(r => r.text()).then(svg => {
-    const img = new Image();
-    img.onload = () => {
-      const c = document.createElement("canvas");
-      c.width = c.height = 180;
-      c.getContext("2d").drawImage(img, 0, 0, 180, 180);
-      document.querySelector('link[rel="apple-touch-icon"]').href = c.toDataURL("image/png");
-    };
-    img.src = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-  });
-})();
+
+  // Iconiță pentru iPhone (Safari nu acceptă SVG la ecranul principal)
+  (function makeAppleIcon() {
+    fetch("icon.svg").then(r => r.text()).then(svg => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas");
+        c.width = c.height = 180;
+        c.getContext("2d").drawImage(img, 0, 0, 180, 180);
+        document.querySelector('link[rel="apple-touch-icon"]').href = c.toDataURL("image/png");
+      };
+      img.src = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+    });
+  })();
 </script>
 </body>
 </html>
